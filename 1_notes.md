@@ -16,3 +16,11 @@ gpt-oss is generally god for agentic workflows
 
 # observability with langSmith
 You just need to add env variables as per langSmith docs. Rest will happen automatiaclly
+
+# chain vs agent
+Agent is diffrent from a achain as chain can use LLM for one of the components, while agent is deciding which step to choose.
+
+chain = developer decides control flow
+agent = LLM decides control flow
+
+# ReAct Agent architecture. LLM first thinks what to do and then starts acting on it
