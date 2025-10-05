@@ -9,3 +9,10 @@ Prompt temples are basically a template steings like f" strings. Only diffrenece
 
 # LCEL - langChain Expression language
 Used to build chains. | is a operator used to chain components together
+
+# models
+gpt-oss is generally god for agentic workflows
+
+
+# observability with langSmith
+You just need to add env variables as per langSmith docs. Rest will happen automatiaclly
