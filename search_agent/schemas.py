@@ -12,7 +12,10 @@ class Source(BaseModel):
 
     url: str = Field(description="The URL of the source")
     description: str = Field(description="description of the job requirments")
-    salary: str = Field(default_factory=None, description="salary, if there is any, or information on any money that could be earned. Can be empty")
+    salary: str = Field(
+        default_factory=None,
+        description="salary, if there is any, or information on any money that could be earned. Can be empty",
+    )
 
 
 # now LLMs can handle composable interfaces litke this
