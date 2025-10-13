@@ -1,8 +1,8 @@
 from dotenv import load_dotenv
+
 load_dotenv()
 from naruto_search import NarutoSearch
-from search_agent import  SearchAgent
-
+from search_agent import SearchAgent
 
 
 def main():
@@ -11,6 +11,7 @@ def main():
 
     sa = SearchAgent()
     sa.main()
+
 
 if __name__ == "__main__":
     main()

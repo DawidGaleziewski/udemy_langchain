@@ -4,24 +4,26 @@ from langchain_openai import ChatOpenAI
 from langchain_core.runnables import RunnableLambda
 from langchain_ollama import ChatOllama
 
+
 # just example of making our own runnable for LCEL
 def custom_runnable_fn(x):
-    print('\n ---> Howdy from runnable \n')
+    print("\n ---> Howdy from runnable \n")
     return x
+
 
 custom_runnable = RunnableLambda(custom_runnable_fn)
 
 
 class NarutoSearch:
     ollama_valid_models: tuple[str] = ("llama3.2", "gemma3")
-    open_ai_model: tuple[str] = ('gpt-5')
-    model=None
-    chain=None
+    open_ai_model: tuple[str] = "gpt-5"
+    model = None
+    chain = None
 
     def __init__(self, model_name):
-       self.model = self.get_model(model_name=model_name)
-       template_in = self.get_template()
-       self.chain = self.get_chain(self.model, template=template_in)
+        self.model = self.get_model(model_name=model_name)
+        template_in = self.get_template()
+        self.chain = self.get_chain(self.model, template=template_in)
 
     summary_template = """
         Given the information {information} about the person I want you to create:
@@ -41,15 +43,14 @@ class NarutoSearch:
         if model_name in self.open_ai_model:
             return ChatOpenAI(temperature=0, model=model_name)
 
-        raise ValueError('Model name not found')
+        raise ValueError("Model name not found")
 
     def get_template(self):
         # prompt template will add parameters to templates.
         # it is wrapper class around prompt
         # modern LLMs are more conversational. That is they accept list of messages and feel better in "context" of the conversation
         summary_prompt_template = PromptTemplate(
-            input_variables=["information"],
-            template=self.summary_template
+            input_variables=["information"], template=self.summary_template
         )
         return summary_prompt_template
 
