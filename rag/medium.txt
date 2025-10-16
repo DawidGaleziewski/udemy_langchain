@@ -1,0 +1,126 @@
+There isn’t a single “official standard” that covers securing unauthenticated public forms end‑to‑end. The accepted approach is layered defense built from: network/edge DDoS protection, application‑level rate limiting and resource limits, anti‑automation and origin checks, strict server‑side validation, TLS/HSTS, WAF rules, and monitoring. OWASP cheat sheets/ASVS, NIST guidance, and the IETF HTTP/Internet RFCs are the most widely recognized references.
+
+If any of my assumptions differ from your setup, please correct me:
+
+I’m assuming the form is truly public (no cookies/bearer tokens required), may be posted to by browsers or non‑browser clients, and could trigger downstream work (DB writes, emails, etc.). If the form does use cookies or other ambient authority later, then classic CSRF protections apply directly.
+Part A — Baseline security for any unauthenticated form
+
+Put the endpoint behind DDoS mitigation and a WAF
+Use a CDN/edge service with always‑on L3/L4/L7 DDoS controls and application firewalling; this absorbs volumetric floods before origin. Public, well‑documented options include AWS Shield + AWS WAF, Azure DDoS Protection + WAF, and Google Cloud Armor. (docs.aws.amazon.com)
+You can’t prevent global spoofing yourself, but ingress filtering (IETF BCP 38 / RFC 2827) is the Internet best practice that reduces spoofed‑source/reflection floods upstream. (rfc-editor.org)
+2. Enforce application‑level rate limiting and graceful shedding
+
+Apply per‑source limits (IP/subnet/ASN), plus secondary keys (e.g., a form token or cookie) where privacy‑appropriate. When throttling, return 429 Too Many Requests and include Retry‑After so well‑behaved clients back off. For temporary overload, use 503 Service Unavailable with Retry‑After. These semantics are defined by the HTTP specs. (httpwg.org)
+Bound request sizes and header sizes and fail fast: reject oversize bodies with 413 Content Too Large; set conservative read/body timeouts to blunt slowloris/slow POST. OWASP DoS guidance calls out size/time limits as core controls. (developer.mozilla.org)
+Consider leaky/token bucket or sliding‑window algorithms at the edge and at the app tier; if limits must vary by path, put stricter limits on “expensive” endpoints. (OWASP API Security Top 10 frames this as avoiding “unrestricted resource consumption.”) (owasp.org)
+3. Add origin and anti‑automation friction (without relying solely on CAPTCHA)
+
+Issue a short‑lived, unpredictable “you fetched this form” token when serving the form and require it on submit. This adapts the CSRF token pattern (even for non‑auth forms) to reduce blind POSTs and cross‑site abuse; OWASP’s CSRF cheat sheet covers token patterns and origin checks. (cheatsheetseries.owasp.org)
+For browser traffic, you can also require a custom header to force a CORS preflight (blocking simple cross‑site form posts) and/or verify Origin/Referer; both are documented in the CSRF cheat sheet. (cheatsheetseries.owasp.org)
+Consider enforcing a Fetch Metadata policy (e.g., reject state‑changing requests when Sec‑Fetch‑Site is cross‑site) to mitigate CSRF‑like cross‑site requests. MDN and the W3C draft describe these headers. (developer.mozilla.org)
+Only use CAPTCHAs as a last resort and provide accessible alternatives; W3C WAI warns many CAPTCHA forms exclude users with disabilities. (w3.org)
+4. Validate inputs and constrain resource use
+
+Enforce allow‑listed types/lengths/ranges on the server; normalize and canonicalize; and reject unexpected content types. OWASP input validation guidance provides concrete patterns. (cheatsheetseries.owasp.org)
+If files are ever accepted: strictly limit types/sizes, verify content (“magic bytes”), store outside web‑root, and scan. See the OWASP File Upload cheat sheet. (github.com)
+Decouple the form from expensive work using a queue/worker; apply per‑destination quotas to email/SMS so your form can’t be abused as an amplifier. NIST SP 800‑53 includes a “Denial‑of‑Service Protection” control (SC‑5) that conceptually supports these mitigations. (csrc.nist.gov)
+5. Web application firewalling and detection
+
+Enable and tune a WAF with a maintained rule set such as the OWASP ModSecurity Core Rule Set (CRS) for common payload blocking; integrate with your CDN or gateway. (owasp.org)
+Centralize logs and metrics; alert on traffic spikes, unusual geos/ASNs, token failures, and error‑rate changes. OWASP’s logging cheat sheet lists the fields and protections to consider. (cheatsheetseries.owasp.org)
+6. Transport hardening
+
+Serve the form only over HTTPS; enforce with HSTS (Strict‑Transport‑Security). See RFC 6797 and the OWASP TLS cheat sheet. (rfc-editor.org)
+7. Know the threat types
+
+OWASP’s DoS guidance and the Automated Threats project categorize L3/L4 volumetric floods vs L7 misuse/automation, with mitigations at each layer. Use it to check coverage. (cheatsheetseries.owasp.org)
+Common pitfalls to avoid
+
+Relying on a single control (e.g., CAPTCHA alone).
+No 429/503/Retry‑After signaling; no size/time limits; or doing expensive work synchronously on submit.
+Returning different error wording/timing that leaks sensitive details (also relevant below for username recovery). (cheatsheetseries.owasp.org)
+Part B — DDoS and flooding specifics (what to put where)
+
+Edge/CDN
+
+Anycasted DDoS scrubbing, geo/ASN/IP rate controls, bot management, and WAF rules at the edge to stop floods early (providers document built‑in protections and managed tiers). (docs.aws.amazon.com)
+Load balancer/app gateway
+
+Connection limits, header/body limits, slow‑read/slow‑POST protection, and IP reputation blocking.
+Path‑aware throttles and 429 with Retry‑After for burst control; 503 with Retry‑After during brownouts. (httpwg.org)
+Application
+
+Form‑token requirement; Origin/Referer checks; optionally a Fetch‑Metadata policy; per‑route rate limits; and robust input validation. (cheatsheetseries.owasp.org)
+Downstream services
+
+Queue submissions; bound worker concurrency; apply per‑identifier/per‑destination quotas (e.g., do not send more than N emails/hour to the same address). OWASP API Security also highlights resource throttling. (owasp.org)
+Part C — Special scenario: unauthenticated “recover my username” form based on four parameters
+
+Main risks to address
+Account/user enumeration (the form leaks whether a user exists). OWASP recommends generic responses and careful timing so attackers can’t distinguish existent vs. non‑existent users. (cheatsheetseries.owasp.org)
+Knowledge‑based checks (the “four things only I know”) have low entropy and are widely known or guessable; NIST no longer recognizes knowledge‑based authentication (KBA) as an acceptable authenticator, and advises against using KBA for password reset. Treat such answers as weak risk signals, not as authenticators. (pages.nist.gov)
+Abuse/flooding of notification channels (spamming a user’s email/SMS with “here is your username”). OWASP’s Forgot Password guidance recommends rate‑limiting, CAPTCHAs only when necessary, and other protections. (cheatsheetseries.owasp.org)
+Recommended flow (designed to avoid enumeration and KBA weaknesses)
+
+Step 1 (collect request): Accept the four inputs, apply strict syntactic validation, and require a short‑lived form token and/or Fetch‑Metadata policy as described above (block cross‑site simple posts). Always reply with the same generic message: “If the details match an account, we’ll send instructions to the contact on file.” Do not render the username in the browser. (cheatsheetseries.owasp.org)
+Step 2 (out‑of‑band confirmation): If the inputs tentatively match an account, send a one‑time code/link to a previously bound contact method (email/SMS). Only after the recipient proves control of that contact channel, reveal the username (ideally on a short‑lived page). This aligns with NIST 800‑63B’s account‑recovery posture (recovery codes/out‑of‑band) rather than KBA. (pages.nist.gov)
+Step 3 (rate/abuse controls):
+Per‑request throttles: per IP/subnet/ASN and per “candidate identity” (e.g., a keyed hash of normalized inputs) with 429 + Retry‑After. (httpwg.org)
+Per‑contact quotas: e.g., send at most N username messages per day per email/phone, and queue requests to smooth bursts.
+Progressive friction: after several failed/rapid attempts, require an accessible challenge (non‑visual alternative if using CAPTCHA). (w3.org)
+UX/text to prevent enumeration: Uniform wording/timing whether the inputs match or not; consider a small, random server‑side delay band to reduce timing oracles. OWASP Authentication cheat sheet covers generic responses. (cheatsheetseries.owasp.org)
+React implementation notes:
+Do not trust client‑side checks; enforce all validation and tokens on the server.
+Include the server‑issued form token in a hidden field (or send via custom header from your React app) and validate server‑side. See the OWASP CSRF cheat sheet for token and header patterns in React/SPA contexts. (cheatsheetseries.owasp.org)
+If you choose a header‑based pattern, your React client adds a custom header; browsers will preflight, which you can use server‑side to block cross‑site “simple” form posts. (cheatsheetseries.owasp.org)
+Additional controls for the username flow
+
+Logging and alerting: log attempts (without sensitive data), especially repeated failures per IP/ASN/device fingerprint and per “candidate identity.” Use these to auto‑ban for short windows during attacks. OWASP’s Logging cheat sheet covers what and how to log safely. (cheatsheetseries.owasp.org)
+TLS/HSTS and WAF as in Part A. (rfc-editor.org)
+What not to do in username recovery
+
+Don’t display “we found your account” vs “no such account” or vary timing; that’s enumeration. (cheatsheetseries.owasp.org)
+Don’t rely on personal “secret questions” or low‑entropy facts as proof of identity. NIST explicitly discourages KBA and forbids it for password reset. (pages.nist.gov)
+Don’t send unlimited out‑of‑band messages; apply quotas. OWASP Forgot Password cheat sheet calls out rate limits to avoid notification floods. (cheatsheetseries.owasp.org)
+Minimal, pragmatic checklist you can implement in order
+
+Put the endpoint behind a CDN/WAF with always‑on DDoS protection. (docs.aws.amazon.com)
+Enforce server‑side rate limits and quotas; use 429/503 with Retry‑After; cap body/header sizes and enforce read/body timeouts; return 413 for oversize. (httpwg.org)
+Require a short‑lived form token or a custom header + origin checks; optionally enforce a Fetch‑Metadata policy. (cheatsheetseries.owasp.org)
+Validate inputs strictly; queue expensive work (mail/SMS/DB) with per‑destination quotas. (cheatsheetseries.owasp.org)
+Log/alert and keep WAF rules updated (e.g., OWASP CRS). Enforce HTTPS with HSTS. (owasp.org)
+References (official specs/guidelines and project docs)
+OWASP Cheat Sheet Series and projects
+
+Denial of Service Cheat Sheet (timeouts, rate limits, size caps). (cheatsheetseries.owasp.org)
+Input Validation Cheat Sheet. (cheatsheetseries.owasp.org)
+File Upload Cheat Sheet. (github.com)
+Cross‑Site Request Forgery Prevention Cheat Sheet (tokens, origin checks, SPA notes). (cheatsheetseries.owasp.org)
+Logging Cheat Sheet. (cheatsheetseries.owasp.org)
+Automated Threats to Web Applications (taxonomy/mitigations). (owasp.org)
+Forgot Password Cheat Sheet (rate‑limit outbound notifications). (cheatsheetseries.owasp.org)
+Authentication Cheat Sheet (avoid user enumeration). (cheatsheetseries.owasp.org)
+OWASP ModSecurity Core Rule Set (CRS). (owasp.org)
+OWASP API Security Top 10 2023 A4 Unrestricted Resource Consumption. (owasp.org)
+NIST
+
+SP 800‑53 Rev. 5, Security and Privacy Controls (includes SC‑5 Denial‑of‑Service Protection). (csrc.nist.gov)
+Digital Identity Guidelines FAQ — KBA not recognized as an authenticator; don’t use for password reset. (pages.nist.gov)
+SP 800‑63B (account recovery concepts: recovery codes/out‑of‑band). (pages.nist.gov)
+IETF/HTTP standards
+
+RFC 6585: 429 Too Many Requests. (httpwg.org)
+RFC 9110: HTTP Semantics — Retry‑After; 503 Service Unavailable; 413 Content Too Large (via MDN summary). (rfc-editor.org)
+RFC 6797: HTTP Strict Transport Security (HSTS). (rfc-editor.org)
+IETF BCP 38 / RFC 2827: Network Ingress Filtering (anti‑spoofing). (rfc-editor.org)
+Fetch Metadata (server‑side isolation against cross‑site requests)
+
+MDN Sec‑Fetch‑Site docs and W3C draft. (developer.mozilla.org)
+Accessibility and CAPTCHA
+
+W3C WAI: Inaccessibility of CAPTCHA (updated Working Group Note + overview). (w3.org)
+Cloud/edge DDoS/WAF service overviews (for implementation context)
+
+AWS Shield/AWS WAF DDoS overview. (docs.aws.amazon.com)
+Azure DDoS Protection overview. (learn.microsoft.com)
+Google Cloud Armor overview. (cloud.google.com)
